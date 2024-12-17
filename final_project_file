@@ -1,0 +1,213 @@
+import requests
+import sqlite3
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# API Information
+weather_url = "http://api.weatherstack.com/"
+weather_key = "93755c270b1106409cd342f59a322815"
+
+bus_url = "https://api-v3.mbta.com/vehicles"
+bus_key = "4985bce5594340fc9649bc998519d6e1"
+
+def fetch_weather_data(api_key, location):
+    params = {
+        'access_key': api_key,
+        'query': location
+    }
+    try:
+        response = requests.get(weather_url + "current", params=params)
+        response.raise_for_status()
+        data = response.json()
+        print("Weather Data:", data)  # Debugging
+        # Make sure to access the correct data structure
+        return data.get('current', {})
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching weather data: {e}")
+        return {}
+
+def fetch_bus_data(api_url):
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        data = response.json()
+        print("Bus Data:", data)  # Debugging
+        return [{"month": item["month"], "attendance": item["attendance"]} for item in data.get("monthly", [])]
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching bus data: {e}")
+        return []
+
+
+def store_weather_data(data):
+    conn = sqlite3.connect('final_project.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS Weather (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            temperature REAL,
+            precipitation REAL
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO Weather (temperature, precipitation)
+        VALUES (?, ?)
+    """, (data.get("temperature"), data.get("precipitation")))
+    conn.commit()
+    conn.close()
+
+
+def store_bus_data(data):
+    with sqlite3.connect('final_project.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS BusAttendance (
+                id INTEGER PRIMARY KEY,
+                month TEXT UNIQUE,
+                attendance INTEGER
+            )
+        """)
+        for entry in data:
+            cursor.execute("""
+                INSERT OR IGNORE INTO BusAttendance (month, attendance)
+                VALUES (?, ?)
+            """, (entry["month"], entry["attendance"]))
+        conn.commit()
+
+def fetch_combined_data():
+    conn = sqlite3.connect('final_project.db')
+    cursor = conn.cursor()
+    
+    # Ensure the Weather table has the 'month' column
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS Weather (
+        id INTEGER PRIMARY KEY,
+        month TEXT,
+        temperature REAL,
+        humidity REAL
+    )
+    """)
+    
+    # Ensure the Bus table exists
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS Bus (
+        id INTEGER PRIMARY KEY,
+        month TEXT UNIQUE,
+        attendance INTEGER
+    )
+    """)
+    
+    # Check if the Weather table has data with the 'month' column
+    cursor.execute("PRAGMA table_info(Weather);")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'month' not in columns:
+        print("Error: 'month' column does not exist in Weather table.")
+        conn.close()
+        return []
+    
+    cursor.execute("""
+    SELECT Weather.month, Weather.temperature, Bus.attendance
+    FROM Weather
+    JOIN Bus ON Weather.month = Bus.month
+    """)
+    
+    combined_data = cursor.fetchall()
+    conn.close()
+    return combined_data
+
+# Example function to insert data into the Weather table
+def insert_weather_data(month, temperature, humidity):
+    conn = sqlite3.connect('final_project.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO Weather (month, temperature, humidity)
+    VALUES (?, ?, ?)
+    """, (month, temperature, humidity))
+    conn.commit()
+    conn.close()
+
+# Example function to insert data into the Bus table
+def insert_bus_data(month, attendance):
+    conn = sqlite3.connect('final_project.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO Bus (month, attendance)
+    VALUES (?, ?)
+    """, (month, attendance))
+    conn.commit()
+    conn.close()
+
+def count_available_seats(bus_data):
+    many_seats_count = 0
+    few_seats_count = 0
+    for bus in bus_data:
+        if bus.get('occupancy_status') == 'MANY_SEATS_AVAILABLE':
+            many_seats_count += 1
+        elif bus.get('occupancy_status') == 'FEW_SEATS_AVAILABLE':
+            few_seats_count += 1
+    return many_seats_count, few_seats_count
+
+def calculate_metrics(data):
+    """
+    Calculate metrics based on combined data.
+
+    Args:
+        data (list): Combined data as a list of tuples.
+
+    Returns:
+        tuple: Correlation, average attendance on rainy days, average attendance on sunny days.
+    """
+    df = pd.DataFrame(data, columns=["month", "temperature", "precipitation", "attendance"])
+    correlation = df["temperature"].corr(df["attendance"])
+    avg_rainy = df[df["precipitation"] > 0]["attendance"].mean()
+    avg_sunny = df[df["precipitation"] == 0]["attendance"].mean()
+
+    print(correlation, avg_rainy, avg_sunny)
+    return correlation, avg_rainy, avg_sunny
+
+def visualize_data(data):
+    """
+    Create visualizations for the combined data.
+
+    Args:
+        data (list): Combined data as a list of tuples.
+    """
+    df = pd.DataFrame(data, columns=["month", "temperature", "precipitation", "attendance"])
+    df.sort_values("month", inplace=True)
+
+
+    # Line graph: Attendance over months
+    plt.figure(figsize=(10, 5))
+    plt.plot(df["month"], df["attendance"], marker='o', label="Bus Attendance")
+    plt.title("Monthly Bus Attendance")
+    plt.xlabel("Month")
+    plt.ylabel("Attendance")
+    plt.legend()
+    plt.savefig("monthly_bus_attendance.png")
+    plt.show()
+
+    # Scatter plot: Attendance vs. Temperature
+    plt.figure(figsize=(8, 5))
+    plt.scatter(df["temperature"], df["attendance"], c="blue", alpha=0.7)
+    plt.title("Attendance vs. Temperature")
+    plt.xlabel("Temperature")
+    plt.ylabel("Attendance")
+    plt.savefig("attendance_vs_temperature.png")
+    plt.show()
+
+# Main program execution
+if __name__ == "__main__":
+    location = "Boston"
+    weather_data = fetch_weather_data(weather_key, location)
+    store_weather_data(weather_data)
+
+    bus_data = fetch_bus_data(bus_url + "?api_key=" + bus_key)
+    store_bus_data(bus_data)
+
+    combined_data = fetch_combined_data()
+    correlation, avg_rainy, avg_sunny = calculate_metrics(combined_data)
+
+    print(f"Correlation between temperature and attendance: {correlation}")
+    print(f"Average attendance on rainy days: {avg_rainy}")
+    print(f"Average attendance on sunny days: {avg_sunny}")
+
+    visualize_data(combined_data)
