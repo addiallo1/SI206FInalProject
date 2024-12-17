@@ -83,7 +83,8 @@ def fetch_combined_data():
         id INTEGER PRIMARY KEY,
         month TEXT,
         temperature REAL,
-        humidity REAL
+        humidity REAL,
+        precipitation REAL
     )
     """)
     
@@ -146,6 +147,20 @@ def count_available_seats(bus_data):
             few_seats_count += 1
     return many_seats_count, few_seats_count
 
+def visualize_seat_availability(bus_data):
+    many_seats_count, few_seats_count = count_available_seats(bus_data)
+    labels = ['Many Seats Available', 'Few Seats Available']
+    sizes = [many_seats_count, few_seats_count]
+    colors = ['lightblue', 'lightcoral']
+    explode = (0.1, 0)  # explode the 1st slice
+
+    plt.figure(figsize=(8, 5))
+    plt.pie(sizes, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%',
+            shadow=True, startangle=140)
+    plt.title('Bus Seat Availability')
+    plt.savefig("bus_seat_availability.png")
+    plt.show()
+
 def calculate_metrics(data):
     """
     Calculate metrics based on combined data.
@@ -193,7 +208,18 @@ def visualize_data(data):
     plt.ylabel("Attendance")
     plt.savefig("attendance_vs_temperature.png")
     plt.show()
-
+    # Scatter plot: Attendance vs. Temperature with Seat Availability
+    many_seats_count, few_seats_count = count_available_seats(bus_data)
+    plt.figure(figsize=(8, 5))
+    scatter = plt.scatter(df["temperature"], df["attendance"], c=df["precipitation"], cmap='viridis', alpha=0.7)
+    plt.colorbar(scatter, label='Precipitation')
+    plt.title("Attendance vs. Temperature with Seat Availability")
+    plt.xlabel("Temperature")
+    plt.ylabel("Attendance")
+    plt.annotate(f'Many Seats Available: {many_seats_count}', xy=(0.05, 0.95), xycoords='axes fraction', fontsize=10, color='blue')
+    plt.annotate(f'Few Seats Available: {few_seats_count}', xy=(0.05, 0.90), xycoords='axes fraction', fontsize=10, color='red')
+    plt.savefig("attendance_vs_temperature_with_seat_availability.png")
+    plt.show()
 # Main program execution
 if __name__ == "__main__":
     location = "Boston"
